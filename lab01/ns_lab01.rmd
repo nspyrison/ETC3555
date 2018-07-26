@@ -1,0 +1,159 @@
+---
+title: "Statistical Machine Learning - lab01"
+author: "SnickR"
+date: "July 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+```
+
+**Also see**
+instructions: https://github.com/camroach87/SML2018/tree/master/labs/lab01
+data: archive.ics.uci.edu/ml/machine-learning-databases/wine-quality/
+
+```{r}
+# read
+library(tidyverse)
+
+red <- read_delim(file="./data/winequality-red.csv", delim = ";")
+wht <- read_delim(file="./data/winequality-white.csv", delim = ";")
+```
+
+## Exercises 1-3
+
+```{r}
+# munging
+str_replace_all(names(red), " ", "_"
+                ) -> names(red) 
+str_replace_all(names(wht), " ", "_"
+                ) -> names(wht)
+
+red %>% mutate(wine_color = "red", qual_cat = quality
+               ) -> red
+wht %>% mutate(wine_color = "white", qual_cat = quality
+               ) -> wht
+
+wine <- bind_rows(red, wht) # 6497 obs
+wine <- na.omit(wine) # drops 2 obs
+
+summary(wine$quality)[2]
+sort(unique(wine$quality))
+
+wine %>% mutate(is_good_qual = if_else(quality >= 7, TRUE, FALSE)
+                ) -> wine
+wine %>% mutate(qual_cat = quality, id = row_number()
+                ) -> wine
+
+wine %>% mutate(
+  qual_cat = case_when(
+    quality <= summary(wine$quality)[2] ~ "bad", # lower than 1st q
+    quality <= summary(wine$quality)[5] ~ "fair", # IQR
+    TRUE ~ "good" # higher than 3rd q
+  )
+) -> wine
+
+
+```
+
+## Exercise 4: Filtering and arranging data
+
+```{r}
+# Filter and arrange
+wine %>% 
+  filter(wine_color == "Red") %>% 
+  arrange(desc(quality))
+
+wine %>% 
+  map(~ sum(is.na(.x))) %>% 
+  unlist()
+
+wine %>% 
+  filter(!is.na(total_sulfur_dioxide) # redundant with na.omit()
+         ) -> wine 
+
+wine %>% 
+  map(~ sum(is.na(.x))) %>% 
+  unlist()
+```
+
+## Exercise 5: Reshaping data
+
+```{r}
+# wide to long
+wine %>% 
+  gather(variable, value, -c(id, wine_color, qual_cat, is_good_qual)
+         ) -> wine_long
+
+# long to wide
+spread(wine_long, variable, value)
+```
+
+## Exercise 6: Summarising data
+
+```{r}
+wine_agg <- wine_long %>% 
+  group_by(wine_color, qual_cat, variable) %>% 
+  summarise(median = median(value),
+            sd = sd(value))
+
+wine_agg %>% 
+  select(-sd) %>% 
+  spread(variable, median)
+```
+
+## Exercise 7: Fitting multiple models
+
+```{r}
+#install.packages("rpart")
+#install.packages("randomForest")
+#install.packages("rpart.plot")
+
+library(rpart)
+library(randomForest)
+
+fit_dt <- function(x) {
+  x <- as_data_frame(x)  # for resample objects
+  
+  rpart(qual_cat ~ alcohol + volatile_acidity + citric_acid + sulphates,
+        data = x)
+}
+
+fit_rf <- function(x) {
+  x <- as_data_frame(x) %>%  # for resample objects
+  mutate(qual_cat = factor(qual_cat, ordered = FALSE))  
+    # randomForest requires factor response for classification
+  
+  randomForest(qual_cat ~ alcohol + volatile_acidity + citric_acid + sulphates,
+               data = x)
+}
+
+fit_df <- wine %>%
+  group_by(wine_color) %>%
+  nest() %>% 
+  mutate(model_dt = map(data, fit_dt),
+         model_rf = map(data, fit_rf))
+
+library(rpart.plot)
+
+plot_dt <- function(tree, title) {
+  rpart.plot(tree, main = title)
+}
+
+walk2(fit_df$model_dt, 
+      paste(fit_df$wine_color, "wine quality decision tree"), 
+      plot_dt)
+
+plot_var_imp <- function(rf, title) {
+  varImpPlot(rf, main = title)
+}
+
+walk2(fit_df$model_rf, 
+      paste(fit_df$wine_color, "wine quality variable importance"), 
+      plot_var_imp)
+
+map(fit_df$model_rf, "confusion")
+```
+
